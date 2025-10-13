@@ -1,6 +1,6 @@
 fastembed==0.7.0
 langchain_groq==0.3.2
-langchain_voyageai==0.1.6
+langchain_voyageai
 protobuf==6.31.1
 python-dotenv==1.1.0
 qdrant_client==1.14.2
