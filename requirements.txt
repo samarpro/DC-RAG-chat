@@ -1,8 +1,8 @@
-fastembed==0.7.0
-langchain_groq==0.3.2
-langchain_voyageai
-protobuf==6.31.1
+streamlit>=1.32
 python-dotenv==1.1.0
-qdrant_client==1.14.2
 google-genai==1.19.0
+voyageai>=0.3
+fastembed==0.7.0
+qdrant_client==1.14.2
 supabase==2.15.3
+protobuf==6.31.1

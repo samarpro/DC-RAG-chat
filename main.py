@@ -3,15 +3,11 @@ from dotenv import load_dotenv
 from typing import List
 from google.genai import Client
 from qdrant_client import QdrantClient
-from langchain_voyageai import VoyageAIEmbeddings
-from fastembed import LateInteractionTextEmbedding, SparseTextEmbedding
+from fastembed import SparseTextEmbedding
 from qdrant_client.models import models
 import os
 from voyageai.client import Client as VoyageClient
 import re
-
-# from google.cloud import aiplatform
-from pathlib import Path
 from supabase import create_client
 import uuid
 
@@ -249,13 +245,13 @@ rag = create_instance()
 # Create three columns, with the image in the center column
 col1, col2, col3 = st.columns([1, 2, 1])
 chat_history = []
-st.logo("DeakinCollege.png", link="https://www.deakincollege.edu.au/", size="large")
+st.logo("assets/deakin-college.png", link="https://www.deakincollege.edu.au/", size="large")
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
 if st.session_state.chat_history == []:
     with col2:
-        st.image("DeakinCollege.png", width=300)
+        st.image("assets/deakin-college.png", width=300)
     st.markdown(
         "<h1 style='text-align: center;'  >What can I help you with?</h1>",
         unsafe_allow_html=True,
@@ -337,6 +333,3 @@ if query:
         # includes all the LLM calling process
         st.rerun()
 
-
-# st.("*Deakin College Chatbot - Powered by RAG* 🚀")
-# with chat_container:
