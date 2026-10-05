@@ -1,0 +1,78 @@
+{
+  "version": "1.0",
+  "description": "Ten seed questions for end-to-end Deakin College RAG evaluation. Scope labels are based on available source filenames; source references identify selected material read to ground relevant cases.",
+  "cases": [
+    {
+      "id": "dc-001",
+      "query": "I'm an Australian student considering the Diploma of Information Technology. What is its listed 2025 tuition fee, and could FEE-HELP cover it?",
+      "scope": "relevant",
+      "requires_multi_file_reasoning": true,
+      "reference_files": ["Fees and Payment - Deakin College.txt", "FEE-Help & Fees - Deakin College.txt"],
+      "expected_answer_facts": ["The listed 2025 Diploma of Information Technology tuition fee is A$36,830.", "FEE-HELP is available for eligible students in Diploma programs, so the program type qualifies; Australian citizens meet the stated citizenship eligibility criterion.", "The source notes fees are reviewed annually and may increase."]
+    },
+    {
+      "id": "dc-002",
+      "query": "I'm an Australian student with FEE-HELP and need to drop one unit after online enrolment closes. What form/process should I use, and by when do I need to withdraw to avoid a FEE-HELP debt for that unit?",
+      "scope": "relevant",
+      "requires_multi_file_reasoning": true,
+      "reference_files": ["FEE-Help & Fees - Deakin College.txt", "Enrolment Variation Form _ Navitas Pty Ltd - Pipefy.txt"],
+      "expected_answer_facts": ["After online enrolment closes, the student should complete the Enrolment Variation form and submit it to Deakin College reception on or before the census date.", "The form is for adding/removing units when the student cannot make the change in the portal; students should continue attending their original classes until notified of the outcome.", "Correctly withdrawing on or before the census date avoids a FEE-HELP debt for that unit.", "The form information distinguishes fee and academic penalties; answer the debt question specifically and avoid implying that withdrawal after census removes the FEE-HELP debt."]
+    },
+    {
+      "id": "dc-003",
+      "query": "What is the difference between the standard and streamlined timetable, and which diplomas can take the streamlined option?",
+      "scope": "relevant",
+      "reference_files": ["Timetable - Deakin College.txt"],
+      "expected_answer_facts": ["Standard classes can be selected across weekdays and offer more flexibility.", "The streamlined timetable has fixed classes across two weekdays and is available at Melbourne Burwood for on-campus students in Business, Commerce, Information Technology, and Health Sciences.", "Both options have the same number of class hours per week."]
+    },
+    {
+      "id": "dc-004",
+      "query": "Where can I find the units I should take for my Diploma of Commerce and chosen bachelor degree?",
+      "scope": "relevant",
+      "reference_files": ["Download Course Outline - Deakin College.txt"],
+      "expected_answer_facts": ["Download the Diploma of Commerce Course Outline; course outlines show which units to select based on the chosen bachelor degree.", "The page provides course outlines by program and trimester."]
+    },
+    {
+      "id": "dc-005",
+      "query": "Who coordinates the Information Technology diploma at Burwood, and how can I contact them?",
+      "scope": "relevant",
+      "reference_files": ["Staff - Deakin College.txt"],
+      "expected_answer_facts": ["Will Taggart is the Academic Co-ordinator for Information Technology at Burwood.", "The directory lists the phone number +61 (0) 3 9246 8025 and email w.taggart@deakin.edu.au."]
+    },
+    {
+      "id": "dc-007",
+      "query": "I'm struggling with college. What help can I get?",
+      "scope": "vague_relevant",
+      "reference_files": ["Student Support - Deakin College.txt", "Current Student FAQs - Deakin College.txt"],
+      "expected_answer_facts": ["The filename set includes student support and FAQ information; ask what kind of help is needed or point to the listed study, counselling, disability, medical, or wellbeing support options."]
+    },
+    {
+      "id": "dc-008",
+      "query": "Can I change something about my studies?",
+      "scope": "vague_relevant",
+      "reference_files": ["Enrolment Variation Form _ Navitas Pty Ltd - Pipefy.txt", "Change of Course Application _ Navitas Pty Ltd - Pipefy.txt", "Change of Campus Application - from Online to On-campus_ On-campus to Online _ Navitas Pty Ltd - Pipefy.txt"],
+      "expected_answer_facts": ["Several change processes appear in the source filenames; clarify whether the student means unit enrolment, course, or campus/mode before giving process details."]
+    },
+    {
+      "id": "dc-009",
+      "query": "What should I know before I start?",
+      "scope": "vague_relevant",
+      "reference_files": ["Preparing to start - Deakin College.txt", "Orientation - Deakin College.txt", "Checklist - Deakin College.txt"],
+      "expected_answer_facts": ["The source filenames indicate preparation, orientation, and checklist information; clarify whether the student means enrolment, arrival, orientation, or first-week preparation."]
+    },
+    {
+      "id": "dc-010",
+      "query": "What are the best settings for a gaming PC to run the latest games?",
+      "scope": "out_of_scope",
+      "reference_files": [],
+      "expected_answer_facts": ["The available filenames concern Deakin College study and student services, not PC gaming or hardware; the system should say it cannot answer from its college information and invite a college-related question."]
+    },
+    {
+      "id": "dc-011",
+      "query": "Will it rain in Melbourne tomorrow, and what will the temperature be?",
+      "scope": "out_of_scope",
+      "reference_files": [],
+      "expected_answer_facts": ["The source filenames include Melbourne information, but no forecast or weather source; the system should avoid inventing tomorrow's weather and state the limitation."]
+    }
+  ]
+}

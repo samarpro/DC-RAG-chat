@@ -62,3 +62,7 @@ requirements.txt
 This is a trial chatbot. Answers can be wrong. The disclaimer in the app is part of that. Retrieval depends on the Qdrant collection already being loaded. This repo does not build or refresh that index.
 
 Speaker-style chat labels are not a record of who wrote the original student question. They only show the turn in this UI.
+
+## RAG evaluation foundation
+
+`evals/rag_workflow.py` contains a Streamlit-free, inspectable copy of the RAG stages, leaving this app's original `main.py` intact. Its constructor supports injected clients for controlled runs, and `RAGWorkflow.answer()` returns the expanded query, retrieved documents, link metadata, and final answer. `evals/golden_questions_v1.json` holds seed cases. No benchmark runner or scoring has been added; see [evals/README.md](evals/README.md).
