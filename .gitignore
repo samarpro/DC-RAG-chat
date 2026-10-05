@@ -1,16 +1,2 @@
-.env
-.venv/
-venv/
-ENV/
-__pycache__/
-*.py[cod]
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.ipynb_checkpoints/
-.vscode/
-.idea/
-.DS_Store
-*.log
-*.sqlite3
-.streamlit/secrets.toml
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*
