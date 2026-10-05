@@ -1,7 +1,7 @@
 import streamlit as st
 from dotenv import load_dotenv
 from typing import List
-from google.genai import Client
+from google import genai
 from qdrant_client import QdrantClient
 from fastembed import SparseTextEmbedding
 from qdrant_client.models import models
@@ -68,7 +68,7 @@ class RAGCore:
     def __init__(self):
         # aiplatform.init(location="australia-southeast1", project="gen-lang-client-0085511127")
         # self.llm = Client(vertexai=True,location="australia-southeast1", project="gen-lang-client-0085511127")
-        self.llm = Client(api_key=os.getenv("GOOGLE_API_KEY"))
+        self.llm = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
         VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY")
         self.vc = VoyageClient(api_key=VOYAGE_API_KEY)  # type:ignore
         self.qclient = QdrantClient(
@@ -142,7 +142,7 @@ class RAGCore:
                     values=sparse_embeddings[0].values.tolist(),
                 ),
                 using="splade",
-                limit=25,
+                limit=10,
             ),
         ]
         results = _self.qclient.query_points(
@@ -161,6 +161,7 @@ class RAGCore:
             list_retrieved_docs.append(point.payload.get("text"))
             meta_dict.update(**point.payload["url_dict"])
 
+        print("----- Retrieved Docs: ", list_retrieved_docs)
         return (list_retrieved_docs, meta_dict, _self.convo_uuid)
 
     @st.cache_resource(show_spinner=False)
@@ -181,9 +182,10 @@ class RAGCore:
             {query}
             """
         msg = _self.llm.models.generate_content(
-            model="gemini-2.0-flash", contents=[prompt]
+            model="gemini-flash-latest", contents=[prompt]
         )
         print("----- Query: ", msg.candidates[0].content)
+        print("----- Query: ", msg.text)
         return msg.text
 
     # ---- Function: Simulate Response Generation (Replace with actual AI model) ----
@@ -192,6 +194,7 @@ class RAGCore:
         """Simulate AI-generated response using retrieved documents."""
         context = ""
         for idx, points in enumerate(retrieved_docs):
+            print(f"----- Retrieved Document {idx+1}: ", points)
             context += points
 
         prompt = f"""
@@ -227,7 +230,7 @@ QUERY:
         """
 
         resp = _self.llm.models.generate_content(
-            model="gemini-2.0-flash", contents=[prompt]
+            model="gemini-flash-latest", contents=[prompt]
         )
         _self.supabase.update({"resp": resp.text}).eq(
             "uuid_id", _self.convo_uuid
@@ -245,7 +248,9 @@ rag = create_instance()
 # Create three columns, with the image in the center column
 col1, col2, col3 = st.columns([1, 2, 1])
 chat_history = []
-st.logo("assets/deakin-college.png", link="https://www.deakincollege.edu.au/", size="large")
+st.logo(
+    "assets/deakin-college.png", link="https://www.deakincollege.edu.au/", size="large"
+)
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -257,7 +262,7 @@ if st.session_state.chat_history == []:
         unsafe_allow_html=True,
     )
     initial_input = st.text_input(
-        label="",
+        label="d",
         placeholder="Get quick answer about your queries...",
         label_visibility="collapsed",
     )
@@ -332,4 +337,3 @@ if query:
 
         # includes all the LLM calling process
         st.rerun()
-
