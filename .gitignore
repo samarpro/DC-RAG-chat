@@ -3,7 +3,8 @@
 ./backfill_splade.py
 ./test_backfill*
 
-.venv/
+./.venv/
 .env
-__pycache__/**
-pyenv.cfg
+./__pycache__/**
+./pyenv.cfg
+./DS_Store
