@@ -122,8 +122,31 @@ def summarize_retrieval(results: Sequence[dict[str, Any]]) -> dict[str, Any]:
     return summary
 
 
-def save_report(report: dict[str, Any], output_dir: Path) -> None:
-    """Save JSON, paired hit@3/5 panels, latency, and dataset MRR plots."""
+def comparison_runs(report: dict[str, Any], counterpart: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Match cases by ID and reject comparisons with different settings or inputs."""
+    if counterpart is None:
+        return [report]
+    config, other = report["configuration"], counterpart["configuration"]
+    if config["query_rewriting"] == other["query_rewriting"]:
+        raise ValueError("Comparison requires query rewriting on and off")
+    for key in ("search_mode", "limit", "hit_ks"):
+        if config[key] != other[key]:
+            raise ValueError(f"Comparison requires matching {key}")
+    cases = {row["case"]["id"]: row["case"] for row in report["cases"]}
+    other_rows = {row["case"]["id"]: row for row in counterpart["cases"]}
+    if len(other_rows) != len(counterpart["cases"]) or cases != {
+        key: row["case"] for key, row in other_rows.items()
+    }:
+        raise ValueError("Comparison requires identical cases")
+    counterpart = {**counterpart, "cases": [other_rows[key] for key in cases]}
+    return sorted([report, counterpart], key=lambda run: not run["configuration"]["query_rewriting"])
+
+
+def save_report(
+    report: dict[str, Any], output_dir: Path, *, counterpart: dict[str, Any] | None = None
+) -> None:
+    """Save plots, optionally comparing query rewriting on and off."""
+    runs = comparison_runs(report, counterpart)
     import matplotlib
 
     matplotlib.use("Agg")
@@ -133,18 +156,22 @@ def save_report(report: dict[str, Any], output_dir: Path) -> None:
     (output_dir / "results.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    rows = report["cases"]
-    labels = [row["case"]["id"] for row in rows]
+    if counterpart is not None:
+        (output_dir / "comparison_results.json").write_text(
+            json.dumps({"query_rewriting_on": runs[0], "query_rewriting_off": runs[1]},
+                       indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    labels = [row["case"]["id"] for row in runs[0]["cases"]]
     positions = list(range(len(labels)))
     config = report["configuration"]
-    caption = (
-        f"{config['search_mode']}, "
-        f"query rewriting {'on' if config['query_rewriting'] else 'off'}"
-    )
-    width = max(8, len(labels) * 0.7)
-    scored = [(position, row["retrieval_metrics"]) for position, row in enumerate(rows)
-              if row["retrieval_metrics"]["status"] == "scored"]
-    summary = report["retrieval_summary"]
+    caption = config["search_mode"]
+    width = max(10, len(labels) * 0.9)
+
+    def run_label(run):
+        return "Rewriting ON" if run["configuration"]["query_rewriting"] else "Rewriting OFF"
+
+    def run_color(run):
+        return "tab:blue" if run["configuration"]["query_rewriting"] else "tab:orange"
 
     def label_cases(ax):
         ax.set_xlim(-0.6, len(labels) - 0.4)
@@ -158,46 +185,64 @@ def save_report(report: dict[str, Any], output_dir: Path) -> None:
         finally:
             plt.close(fig)
 
-    fig, axes = plt.subplots(2, 1, figsize=(width, 8))
+    fig, axes = plt.subplots(2, 1, figsize=(width, 9))
     fig.suptitle(f"Reference file hits: {caption}")
+    bar_width = 0.8 / (2 * len(runs))
     for ax, k in zip(axes, HIT_KS):
-        if scored:
-            for offset, kind, label in ((-0.2, "any", "Any reference"), (0.2, "all", "All references")):
+        means = []
+        for index, run in enumerate(runs):
+            scored = [(position, row["retrieval_metrics"]) for position, row in enumerate(run["cases"])
+                      if row["retrieval_metrics"]["status"] == "scored"]
+            for kind_index, kind in enumerate(("any", "all")):
+                offset = -0.4 + bar_width * (2 * index + kind_index + 0.5)
                 ax.bar([position + offset for position, _ in scored],
                        [metrics["hit_at_k"][str(k)][kind] for _, metrics in scored],
-                       width=0.4, label=label)
-            means = summary["hit_at_k"][str(k)]
-            ax.set_title(f"Mean hit@{k}: any {means['any']:.3f}, all {means['all']:.3f}")
-            ax.legend()
-        else:
-            ax.set_title(f"Hit@{k}: no scored cases")
+                       width=bar_width, color=run_color(run),
+                       hatch="//" if kind == "all" else None,
+                       label=f"{run_label(run)}: {kind} reference{'s' if kind == 'all' else ''}")
+            average = run["retrieval_summary"]["hit_at_k"][str(k)]
+            means.append(f"{run_label(run)}: any {average['any']:.3f}, all {average['all']:.3f}"
+                         if average["any"] is not None else f"{run_label(run)}: N/A")
+            for position, row in enumerate(run["cases"]):
+                if row["retrieval_metrics"]["status"] != "scored":
+                    offset = -0.4 + bar_width * (2 * index + 1)
+                    ax.text(position + offset, 0.05, "N/A", ha="center", fontsize=7, rotation=90)
+        ax.set_title(f"Mean hit@{k}\n" + " | ".join(means), fontsize=10)
+        ax.legend(ncol=len(runs), loc="upper right", fontsize=8)
         ax.set_ylabel(f"Hit@{k}")
-        ax.set_ylim(0, 1.15)
-        for position, row in enumerate(rows):
-            if row["retrieval_metrics"]["status"] != "scored":
-                ax.text(position, 0.05, "N/A", ha="center", fontsize=8)
+        ax.set_ylim(0, 1.4)
+        ax.set_yticks([0, 0.5, 1])
         label_cases(ax)
     save_figure(fig, "hit_at_3_and_5.png")
 
     fig, ax = plt.subplots(figsize=(width, 4))
-    ax.bar(positions, [row["latency_seconds"] for row in rows])
+    bar_width = 0.8 / len(runs)
+    for index, run in enumerate(runs):
+        offset = -0.4 + bar_width * (index + 0.5)
+        ax.bar([position + offset for position in positions],
+               [row["latency_seconds"] for row in run["cases"]], width=bar_width,
+               color=run_color(run), label=run_label(run))
     ax.set_title(f"End-to-end latency: {caption}")
     ax.set_ylabel("Latency (seconds)")
+    ax.legend()
     label_cases(ax)
     save_figure(fig, "latency.png")
 
-    fig, ax = plt.subplots(figsize=(6, 4))
-    mrr = summary["mrr_at_limit"]
-    if mrr is not None:
-        ax.bar([0], [mrr], width=0.5)
-        ax.text(0, mrr + 0.03, f"{mrr:.3f}", ha="center")
-    else:
-        ax.text(0, 0.5, "N/A: no scored cases", ha="center")
-    ax.set_xticks([0], [f"{summary['scored_cases']} scored cases"])
-    ax.set_xlim(-0.75, 0.75)
+    fig, ax = plt.subplots(figsize=(7, 4))
+    for index, run in enumerate(runs):
+        summary = run["retrieval_summary"]
+        mrr = summary["mrr_at_limit"]
+        if mrr is not None:
+            ax.bar([index], [mrr], width=0.5, color=run_color(run), label=run_label(run))
+            ax.text(index, mrr + 0.03, f"{mrr:.3f}", ha="center")
+        else:
+            ax.text(index, 0.5, "N/A: no scored cases", ha="center")
+    ax.set_xticks(list(range(len(runs))),
+                  [f"{run_label(run)}\n{run['retrieval_summary']['scored_cases']} scored cases" for run in runs])
+    ax.set_xlim(-0.75, len(runs) - 0.25)
     ax.set_ylim(0, 1.15)
     ax.set_ylabel(f"MRR@{config['limit']}")
-    ax.set_title(f"Dataset MRR@{config['limit']}: {caption}", fontsize=10)
+    ax.set_title(f"Dataset MRR@{config['limit']}: {caption}")
     save_figure(fig, "mrr.png")
 
 
@@ -218,6 +263,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         "--query-rewriting", action=argparse.BooleanOptionalAction, default=True,
         help="Rewrite before retrieval; disable with --no-query-rewriting",
     )
+    comparison = parser.add_mutually_exclusive_group()
+    comparison.add_argument("--compare-query-rewriting", action="store_true",
+                            help="Run both rewriting settings and plot their comparison")
+    comparison.add_argument("--compare-report", type=Path,
+                            help="Compare with a saved results.json from the opposite rewriting setting")
     parser.add_argument("--limit", type=positive_int, default=10)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
     args = parser.parse_args(argv)
@@ -229,7 +279,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         search_mode=args.search_mode, query_rewriting=args.query_rewriting
     )
     report = run_evaluation(workflow, cases, limit=args.limit)
-    save_report(report, args.output_dir)
+    counterpart = None
+    if args.compare_query_rewriting:
+        other_workflow = RAGWorkflow(
+            search_mode=args.search_mode, query_rewriting=not args.query_rewriting
+        )
+        counterpart = run_evaluation(other_workflow, cases, limit=args.limit)
+    elif args.compare_report is not None:
+        counterpart = json.loads(args.compare_report.read_text(encoding="utf-8"))
+    save_report(report, args.output_dir, counterpart=counterpart)
     if args.query is not None:
         print(report["cases"][0]["result"]["answer"])
     print(f"Saved {len(cases)} cases to {args.output_dir}")

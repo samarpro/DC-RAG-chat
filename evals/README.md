@@ -16,6 +16,12 @@ Install the project requirements, including Matplotlib, and configure the enviro
 # Default: seed dataset, hybrid search, query rewriting enabled
 python -m evals.run_evals
 
+# Run both rewriting settings and compare them in every graph
+python -m evals.run_evals --compare-query-rewriting
+
+# Run rewriting off and compare with an existing rewriting-on report
+python -m evals.run_evals --no-query-rewriting --compare-report evals/results/results.json --output-dir evals/results/comparison
+
 # Explicit sparse-only retrieval, with the original queries
 python -m evals.run_evals --search-mode sparse --no-query-rewriting --output-dir evals/results/sparse
 
@@ -36,6 +42,10 @@ Each run saves four files in `--output-dir`, defaulting to `evals/results`:
 - `mrr.png` shows one MRR value for the dataset, using the configured retrieval limit.
 
 Retrieved-passage counts are omitted. Use separate output directories to preserve different runs; reusing a directory replaces its report files. Service errors stop the run.
+
+`--compare-query-rewriting` runs each case once with rewriting on and once with it off. `--compare-report PATH` instead compares the current run with a saved report from the opposite setting. Comparisons require identical cases, search mode, retrieval limit, and hit cutoffs; case IDs align the plots even when report order differs. These two flags are mutually exclusive.
+
+Comparison graphs keep the same filenames. Blue bars represent rewriting ON and orange bars rewriting OFF. Hit plots use solid bars for any reference and hatched bars for all references, with a legend for all four series. Latency plots pair the two settings for each case; MRR plots label each setting on the x-axis and show its scored case count. Missing scores are marked N/A. `comparison_results.json` preserves both complete reports, while `results.json` contains the primary run selected by `--query-rewriting` or `--no-query-rewriting`. Latency is measured once per case per setting and can vary between runs.
 
 ## Retrieval metrics
 

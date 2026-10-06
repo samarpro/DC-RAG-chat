@@ -11,7 +11,7 @@ import numpy as np
 from qdrant_client import models
 
 from evals.rag_workflow import RAGResult, RAGWorkflow
-from evals.run_evals import main, retrieval_metrics, run_evaluation, save_report
+from evals.run_evals import comparison_runs, main, retrieval_metrics, run_evaluation, save_report
 
 
 class WorkflowTests(unittest.TestCase):
@@ -125,6 +125,45 @@ class WorkflowTests(unittest.TestCase):
             factory.assert_called_once_with(search_mode="sparse", query_rewriting=False)
             report = json.loads((Path(directory) / "results.json").read_text())
             self.assertEqual(report["configuration"]["limit"], 4)
+
+    def test_cli_runs_both_rewriting_settings_when_requested(self):
+        on = self.make_workflow("dense", True)
+        off = self.make_workflow("dense", False)
+        with TemporaryDirectory() as directory, patch(
+            "evals.run_evals.RAGWorkflow", side_effect=[on, off]
+        ) as factory:
+            main(["--query", "question", "--search-mode", "dense",
+                  "--compare-query-rewriting", "--output-dir", directory])
+            self.assertEqual([call.kwargs["query_rewriting"] for call in factory.call_args_list], [True, False])
+            comparison = json.loads((Path(directory) / "comparison_results.json").read_text())
+            self.assertTrue(comparison["query_rewriting_on"]["configuration"]["query_rewriting"])
+            self.assertFalse(comparison["query_rewriting_off"]["configuration"]["query_rewriting"])
+
+    def test_comparison_aligns_cases_by_id_and_rejects_mismatches(self):
+        from copy import deepcopy
+
+        cases = [{"id": "a", "query": "first"}, {"id": "b", "query": "second"}]
+        on_workflow = Mock(search_mode="dense", query_rewriting=True)
+        on_workflow.answer.return_value = RAGResult("q", "q", [], {}, "answer", [])
+        on = run_evaluation(on_workflow, cases)
+        off = deepcopy(on)
+        off["configuration"]["query_rewriting"] = False
+        off["cases"].reverse()
+        runs = comparison_runs(off, on)
+        self.assertTrue(runs[0]["configuration"]["query_rewriting"])
+        self.assertEqual([row["case"]["id"] for row in runs[1]["cases"]], ["b", "a"])
+        with TemporaryDirectory() as directory:
+            save_report(on, Path(directory), counterpart=off)
+            comparison = json.loads((Path(directory) / "comparison_results.json").read_text())
+            self.assertEqual([row["case"]["id"] for row in comparison["query_rewriting_off"]["cases"]], ["a", "b"])
+        for mutation in ("search_mode", "limit", "query", "query_rewriting"):
+            invalid = deepcopy(off)
+            if mutation == "query":
+                invalid["cases"][0]["case"]["query"] = "changed"
+            else:
+                invalid["configuration"][mutation] = on["configuration"][mutation] if mutation == "query_rewriting" else "different"
+            with self.subTest(mutation=mutation), self.assertRaises(ValueError):
+                comparison_runs(on, invalid)
 
 
 class RetrievalMetricTests(unittest.TestCase):
