@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, Sequence
 
 from dotenv import load_dotenv
@@ -31,6 +31,7 @@ class RAGResult:
     retrieved_documents: list[str]
     link_metadata: dict[str, str]
     answer: str
+    ranked_sources: list[str | None] = field(default_factory=list)
 
 
 class RAGWorkflow:
@@ -110,6 +111,12 @@ QUERY:
     def retrieve_documents(
         self, query: str, *, limit: int = 10
     ) -> tuple[list[str], dict[str, str]]:
+        documents, links, _ = self._retrieve_documents(query, limit=limit)
+        return documents, links
+
+    def _retrieve_documents(
+        self, query: str, *, limit: int = 10
+    ) -> tuple[list[str], dict[str, str], list[str | None]]:
         if limit < 1:
             raise ValueError("limit must be positive")
         dense_vector = None
@@ -146,13 +153,16 @@ QUERY:
 
         documents: list[str] = []
         link_metadata: dict[str, str] = {}
+        ranked_sources: list[str | None] = []
         for point in result.points:
             payload = point.payload or {}
+            source = payload.get("source")
+            ranked_sources.append(source if isinstance(source, str) and source.strip() else None)
             document = payload.get("text")
             if document:
                 documents.append(document)
             link_metadata.update(payload.get("url_dict") or {})
-        return documents, link_metadata
+        return documents, link_metadata, ranked_sources
 
     def generate_response(self, query: str, documents: Sequence[str]) -> str:
         context = "\n\n".join(documents)
@@ -185,7 +195,7 @@ QUERY:
         if limit < 1:
             raise ValueError("limit must be positive")
         expanded_query = self.expand_query(query) if self.query_rewriting else query
-        documents, link_metadata = self.retrieve_documents(expanded_query, limit=limit)
+        documents, link_metadata, ranked_sources = self._retrieve_documents(expanded_query, limit=limit)
         raw_answer = self.generate_response(query, documents)
         return RAGResult(
             query=query,
@@ -193,6 +203,7 @@ QUERY:
             retrieved_documents=documents,
             link_metadata=link_metadata,
             answer=self.convert_links_to_markdown(raw_answer, link_metadata),
+            ranked_sources=ranked_sources,
         )
 
 

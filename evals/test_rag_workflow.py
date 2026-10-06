@@ -10,8 +10,8 @@ from unittest.mock import Mock, patch
 import numpy as np
 from qdrant_client import models
 
-from evals.rag_workflow import RAGWorkflow
-from evals.run_evals import main, run_evaluation, save_report
+from evals.rag_workflow import RAGResult, RAGWorkflow
+from evals.run_evals import main, retrieval_metrics, run_evaluation, save_report
 
 
 class WorkflowTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class WorkflowTests(unittest.TestCase):
         )]
         qdrant = Mock()
         qdrant.query_points.return_value = SimpleNamespace(points=[
-            SimpleNamespace(payload={"text": "passage", "url_dict": {"Help": "https://example.com"}}),
+            SimpleNamespace(payload={"source": "help.txt", "text": "passage", "url_dict": {"Help": "https://example.com"}}),
             SimpleNamespace(payload=None),
         ])
         return RAGWorkflow(
@@ -46,6 +46,7 @@ class WorkflowTests(unittest.TestCase):
                     query = "rewritten query" if rewriting else "original query"
                     self.assertEqual(result.expanded_query, query)
                     self.assertEqual(result.retrieved_documents, ["passage"])
+                    self.assertEqual(result.ranked_sources, ["help.txt", None])
                     self.assertEqual(result.answer, "See [Help](https://example.com)")
                     self.assertEqual(workflow.llm.models.generate_content.call_count, 2 if rewriting else 1)
                     self.assertEqual(workflow.voyage_client.embed.call_count, int(mode != "sparse"))
@@ -98,14 +99,17 @@ class WorkflowTests(unittest.TestCase):
         report = run_evaluation(workflow, cases, limit=3)
         self.assertEqual(report["cases"][0]["case"], cases[0])
         self.assertEqual(report["configuration"], {
-            "search_mode": "dense", "query_rewriting": False, "limit": 3,
+            "search_mode": "dense", "query_rewriting": False, "limit": 3, "hit_ks": [3, 5],
         })
         self.assertGreaterEqual(report["cases"][0]["latency_seconds"], 0)
         with TemporaryDirectory() as directory:
             output = Path(directory)
             save_report(report, output)
             self.assertEqual(json.loads((output / "results.json").read_text()), report)
-            self.assertTrue((output / "diagnostics.png").read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertNotIn("retrieved_document_count", report["cases"][0])
+            for name in ("hit_at_3_and_5.png", "latency.png", "mrr.png"):
+                self.assertTrue((output / name).read_bytes().startswith(b"\x89PNG\r\n\x1a\n"))
+            self.assertFalse((output / "diagnostics.png").exists())
 
     def test_wrapper_validates_all_cases_before_running(self):
         workflow = self.make_workflow()
@@ -121,6 +125,74 @@ class WorkflowTests(unittest.TestCase):
             factory.assert_called_once_with(search_mode="sparse", query_rewriting=False)
             report = json.loads((Path(directory) / "results.json").read_text())
             self.assertEqual(report["configuration"]["limit"], 4)
+
+
+class RetrievalMetricTests(unittest.TestCase):
+    def test_any_all_and_reciprocal_rank_use_original_passage_ranks(self):
+        metrics = retrieval_metrics(["a.txt", "b.txt"], ["other.txt", "a.txt", "a.txt", "b.txt"])
+        self.assertEqual(metrics, {
+            "status": "scored", "hit_at_k": {"3": {"any": 1, "all": 0}, "5": {"any": 1, "all": 1}},
+            "first_relevant_rank": 2, "reciprocal_rank_at_limit": 0.5,
+        })
+        self.assertEqual(retrieval_metrics(["a.txt", "b.txt"], ["a.txt", "b.txt"])["hit_at_k"]["3"]["all"], 1)
+
+    def test_cutoff_boundary_and_misses(self):
+        for sources, hit, rr in ((["x", "x", "a"], 1, 1 / 3),
+                                 (["x", "x", "x", "a"], 0, 0.25),
+                                 (["x"], 0, 0.0), ([], 0, 0.0)):
+            with self.subTest(sources=sources):
+                metrics = retrieval_metrics(["a"], sources)
+                self.assertEqual(metrics["hit_at_k"]["3"]["any"], hit)
+                self.assertEqual(metrics["reciprocal_rank_at_limit"], rr)
+
+    def test_rank_five_hits_only_at_five_and_rank_six_misses_both(self):
+        for rank in (5, 6):
+            with self.subTest(rank=rank):
+                metrics = retrieval_metrics(["a"], ["x"] * (rank - 1) + ["a"])
+                self.assertEqual(metrics["hit_at_k"]["3"], {"any": 0, "all": 0})
+                self.assertEqual(metrics["hit_at_k"]["5"],
+                                 {"any": int(rank == 5), "all": int(rank == 5)})
+                self.assertEqual(metrics["reciprocal_rank_at_limit"], 1 / rank)
+
+    def test_exact_basename_matching_and_duplicate_references(self):
+        metrics = retrieval_metrics(["a.txt", "a.txt", "b.txt"],
+                                    ["/data/a.txt", "C:\\data\\b.txt"])
+        self.assertEqual(metrics["hit_at_k"]["3"]["all"], 1)
+        self.assertEqual(retrieval_metrics(["a.txt"], ["A.txt"])["hit_at_k"]["3"]["any"], 0)
+
+    def test_unlabeled_and_missing_sources_are_not_scored(self):
+        self.assertEqual(retrieval_metrics([], [None])["status"], "no_references")
+        metrics = retrieval_metrics(["a"], [None, "a"])
+        self.assertEqual(metrics["status"], "missing_source")
+        self.assertIsNone(metrics["reciprocal_rank_at_limit"])
+
+    def test_summary_averages_queries_once_and_excludes_unscorable_cases(self):
+        workflow = Mock(search_mode="dense", query_rewriting=False)
+        workflow.answer.side_effect = [
+            RAGResult("q", "q", [], {}, "answer", sources)
+            for sources in (["x", "a"], ["x"], [None], ["x"])
+        ]
+        cases = [{"id": str(i), "query": "q", "reference_files": refs}
+                 for i, refs in enumerate((["a"], ["a"], ["a"], []))]
+        report = run_evaluation(workflow, cases)
+        self.assertEqual(workflow.answer.call_count, 4)
+        self.assertEqual(report["retrieval_summary"], {
+            "scored_cases": 2, "excluded_cases": 2,
+            "hit_at_k": {"3": {"any": 0.5, "all": 0.5}, "5": {"any": 0.5, "all": 0.5}},
+            "mrr_at_limit": 0.25,
+        })
+        with TemporaryDirectory() as directory:
+            save_report(report, Path(directory))
+            self.assertTrue((Path(directory) / "mrr.png").is_file())
+
+    def test_invalid_labels_and_cutoffs_fail_before_workflow_calls(self):
+        for references, limit in ((["a"], 4), ("a", 10), ([None], 10)):
+            with self.subTest(references=references, limit=limit):
+                workflow = Mock()
+                with self.assertRaises(ValueError):
+                    run_evaluation(workflow, [{"id": "a", "query": "q", "reference_files": references}],
+                                   limit=limit)
+                workflow.answer.assert_not_called()
 
 
 if __name__ == "__main__":
