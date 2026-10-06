@@ -1,6 +1,6 @@
 # Evaluation foundation
 
-This directory contains the seed question set in `golden_questions_v1.json`, a reusable RAG workflow, and a testing wrapper. The wrapper records outputs and diagnostics; answer-quality scoring is not defined yet.
+This directory contains the seed question set in `golden_questions_v1.json`, a reusable RAG workflow, retrieval diagnostics, and a JEV answer-quality evaluator.
 
 ## Workflow boundary
 
@@ -73,6 +73,49 @@ report = run_evaluation(workflow, [{"id": "enrolment", "query": result.query}])
 `search_mode` accepts `hybrid`, `sparse`, or `dense` and defaults to `hybrid`. Hybrid combines Voyage and SPLADE retrieval with RRF. Single-mode searches query their named Qdrant vector directly and skip the unused embedding client. With rewriting off, `expanded_query` equals the original query. Answer generation still uses Gemini in every mode.
 
 Run the offline checks with `python -m unittest evals.test_rag_workflow`.
+
+## JEV answer quality
+
+Judge the saved answers against their original queries, `expected_answer_facts`, and the retrieved context. This step uses JEV through the Vercel AI SDK and AI Gateway, model `typesafe-ai/jev`. It does not rerun retrieval or answer generation. The Python `ai` package supplies the Vercel SDK; no Node runtime is required.
+
+```bash
+python -m pip install -r requirements.txt
+# Configure AI_GATEWAY_API_KEY in the root .env, or supply VERCEL_OIDC_TOKEN.
+python -m evals.judge_answers
+
+# Judge a single saved run instead of the ON/OFF comparison
+python -m evals.judge_answers --input evals/results/results.json --output-dir evals/results/quality
+```
+
+The default input is `evals/results/comparison_results.json`. The evaluator calls `ai.ops.experimental.evaluate()` with `ai.get_model("typesafe-ai/jev")`, typed `ChoiceQuestion` and `ScoreQuestion` objects. Python validates the saved inputs, computes the composite, and draws the Matplotlib plots. SDK and provider failures stop the run rather than inventing scores. Configure Gateway credentials, not a direct TypeSafe key.
+
+The versioned prompt and weights live in [`jev_rubric.json`](jev_rubric.json). Each semantic dimension has its own question and concrete ordered levels. JEV evaluates all questions against the same state in one request per answer. Every score is normalized to 0–1 before code applies these weights:
+
+| Dimension | Weight | What it checks |
+| --- | ---: | --- |
+| Expected information | 35% | Whether the answer conveys each expected fact or expected behavior in response to the original query |
+| Context grounding | 20% | Whether factual claims are supported by the context actually retrieved |
+| Intent handling | 10% | Whether the answer addresses the query, clarifies ambiguity, or handles an out-of-scope request |
+| Clarity | 10% | Whether the student can understand the response on first reading |
+| Actionability | 10% | Whether the student has a usable answer, next step, clarification, or redirect |
+| Low predicted frustration | 10% | Whether the response avoids evasiveness, dismissiveness, repetition, and unnecessary work |
+| Source link presence | 5% | Deterministic presence of a source tag or Markdown link resolving to a retrieved metadata URL |
+
+Each expected fact gets one of four JEV labels: `answered`, `partly_answered`, `missing`, or `contradicted`. Expected-information coverage averages their credits, respectively 1, 0.5, 0, and 0. An answer can be correctly grounded yet miss the reference target if retrieval did not supply the needed evidence. The other five semantic dimensions use three anchored levels, normalized by dividing JEV's score by 2. The composite is `100 * sum(effective_weight * normalized_score)`.
+
+Link presence is checked in code against `link_metadata`. Unresolved `#` links, unknown URLs, and plain link text receive no credit. A known URL establishes that a source link is present; it does not prove that the linked page supports a particular claim or remains reachable. No external link requests are made. Cases can set `requires_source_links` explicitly; by default it is false for `out_of_scope` cases and true otherwise. When links are not required, that dimension is N/A and the remaining weights are normalized to sum to one. Other dimensions still assess out-of-scope answers against their expected abstention behavior.
+
+The evaluator saves three new files without replacing retrieval diagnostics:
+
+- `answer_quality.json` contains every per-fact label, normalized dimension score, effective weight, composite, raw JEV answer and probability data, model metadata, and the full rubric plus its hash.
+- `answer_quality.png` plots every rubric dimension's mean and composite scores by case, comparing rewriting ON/OFF when both are supplied. Higher values are better, including low predicted frustration.
+- `expected_fact_labels.png` plots all four expected-fact labels for each rewriting setting.
+
+These scores are model judgments, not verified truth or measured user emotions. Fact-label counts count facts, while composite means count queries equally. Provider probabilities and confidence are preserved for inspection; they are not added to the quality score. Human spot checks are needed to assess whether this rubric and the seed references match the intended behavior. Change weights with `--rubric PATH` to use another version of the rubric.
+
+The implementation follows [TypeSafe's composite scoring pattern](https://docs.typesafe.ai/patterns/composite-scoring) and [Vercel's Python evaluation API](https://ai-python.dev/docs/reference/ops#experimentalevaluate). The experimental Python SDK is pinned in `requirements.txt`.
+
+Run offline checks with `python -m unittest evals.test_judge_answers evals.test_rag_workflow`.
 
 ## Future case format
 
