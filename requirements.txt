@@ -6,3 +6,4 @@ fastembed==0.7.0
 qdrant_client==1.14.2
 supabase==2.15.3
 protobuf==6.31.1
+matplotlib>=3.8

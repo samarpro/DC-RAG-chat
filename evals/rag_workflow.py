@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from dotenv import load_dotenv
 from fastembed import SparseTextEmbedding
@@ -17,6 +17,9 @@ from google import genai
 from qdrant_client import QdrantClient
 from qdrant_client.models import models
 from voyageai.client import Client as VoyageClient
+
+
+SearchMode = Literal["hybrid", "sparse", "dense"]
 
 
 @dataclass(frozen=True)
@@ -31,22 +34,30 @@ class RAGResult:
 
 
 class RAGWorkflow:
-    """Expand a query, retrieve hybrid-search context, then generate an answer."""
+    """Optionally rewrite a query, retrieve context, then generate an answer."""
 
     def __init__(
         self,
         *,
+        search_mode: SearchMode = "hybrid",
+        query_rewriting: bool = True,
         llm: Any | None = None,
         voyage_client: Any | None = None,
         qdrant_client: Any | None = None,
         sparse_embedding_model: Any | None = None,
     ) -> None:
+        if search_mode not in ("hybrid", "sparse", "dense"):
+            raise ValueError("search_mode must be 'hybrid', 'sparse', or 'dense'")
+        self.search_mode = search_mode
+        self.query_rewriting = query_rewriting
         load_dotenv()
         self.llm = llm if llm is not None else genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
         self.voyage_client = (
             voyage_client
             if voyage_client is not None
             else VoyageClient(api_key=os.getenv("VOYAGE_API_KEY"))
+            if search_mode in ("hybrid", "dense")
+            else None
         )
         self.qdrant_client = (
             qdrant_client
@@ -63,6 +74,8 @@ class RAGWorkflow:
             sparse_embedding_model
             if sparse_embedding_model is not None
             else SparseTextEmbedding(model_name="prithivida/Splade_PP_en_v1")
+            if search_mode in ("hybrid", "sparse")
+            else None
         )
 
     @staticmethod
@@ -97,28 +110,36 @@ QUERY:
     def retrieve_documents(
         self, query: str, *, limit: int = 10
     ) -> tuple[list[str], dict[str, str]]:
-        sparse = list(self.sparse_embedding_model.embed(query))[0]
-        dense = self.voyage_client.embed(
-            model="voyage-3", texts=[query], input_type="query"
-        )
-        prefetch = [
-            models.Prefetch(
-                query=[float(value) for value in dense.embeddings[0]],
-                limit=25,
-                using="voyage3",
-            ),
-            models.Prefetch(
-                query=models.SparseVector(
-                    indices=sparse.indices.tolist(), values=sparse.values.tolist()
-                ),
-                using="splade",
-                limit=10,
-            ),
-        ]
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        dense_vector = None
+        sparse_vector = None
+        if self.search_mode in ("hybrid", "dense"):
+            dense = self.voyage_client.embed(
+                model="voyage-3", texts=[query], input_type="query"
+            )
+            dense_vector = [float(value) for value in dense.embeddings[0]]
+        if self.search_mode in ("hybrid", "sparse"):
+            sparse = next(iter(self.sparse_embedding_model.embed(query)))
+            sparse_vector = models.SparseVector(
+                indices=sparse.indices.tolist(), values=sparse.values.tolist()
+            )
+
+        if self.search_mode == "hybrid":
+            search = {
+                "prefetch": [
+                    models.Prefetch(query=dense_vector, limit=max(25, limit), using="voyage3"),
+                    models.Prefetch(query=sparse_vector, limit=max(10, limit), using="splade"),
+                ],
+                "query": models.FusionQuery(fusion=models.Fusion.RRF),
+            }
+        elif self.search_mode == "dense":
+            search = {"query": dense_vector, "using": "voyage3"}
+        else:
+            search = {"query": sparse_vector, "using": "splade"}
         result = self.qdrant_client.query_points(
             "hybrid-search-splade",
-            prefetch=prefetch,
-            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            **search,
             with_payload=True,
             limit=limit,
         )
@@ -159,10 +180,12 @@ QUERY:
         )
         return response.text or ""
 
-    def answer(self, query: str) -> RAGResult:
+    def answer(self, query: str, *, limit: int = 10) -> RAGResult:
         """Run the complete RAG workflow without UI, cache, or persistence effects."""
-        expanded_query = self.expand_query(query)
-        documents, link_metadata = self.retrieve_documents(expanded_query)
+        if limit < 1:
+            raise ValueError("limit must be positive")
+        expanded_query = self.expand_query(query) if self.query_rewriting else query
+        documents, link_metadata = self.retrieve_documents(expanded_query, limit=limit)
         raw_answer = self.generate_response(query, documents)
         return RAGResult(
             query=query,
@@ -173,15 +196,8 @@ QUERY:
         )
 
 
-def create_instance() -> RAGWorkflow:
+def create_instance(
+    *, search_mode: SearchMode = "hybrid", query_rewriting: bool = True
+) -> RAGWorkflow:
     """Create a configured workflow instance using environment credentials."""
-    return RAGWorkflow()
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("query", help="Question to send through the RAG workflow")
-    args = parser.parse_args()
-    print(RAGWorkflow().answer(args.query).answer)
+    return RAGWorkflow(search_mode=search_mode, query_rewriting=query_rewriting)

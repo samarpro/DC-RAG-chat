@@ -1,4 +1,9 @@
 # Created by venv; see https://docs.python.org/3/library/venv.html
-*
-!evals/
-!evals/**
+./gen-lang*
+./backfill_splade.py
+./test_backfill*
+
+.venv/
+.env
+__pycache__/**
+pyenv.cfg

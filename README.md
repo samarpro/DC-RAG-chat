@@ -65,4 +65,4 @@ Speaker-style chat labels are not a record of who wrote the original student que
 
 ## RAG evaluation foundation
 
-`evals/rag_workflow.py` contains a Streamlit-free, inspectable copy of the RAG stages, leaving this app's original `main.py` intact. Its constructor supports injected clients for controlled runs, and `RAGWorkflow.answer()` returns the expanded query, retrieved documents, link metadata, and final answer. `evals/golden_questions_v1.json` holds seed cases. No benchmark runner or scoring has been added; see [evals/README.md](evals/README.md).
+`evals/rag_workflow.py` contains a Streamlit-free, inspectable copy of the RAG stages, leaving this app's original `main.py` intact. Its constructor supports injected clients, hybrid/sparse/dense retrieval, and optional query rewriting. `RAGWorkflow.answer()` returns the expanded query, retrieved documents, link metadata, and final answer. Run `python -m evals.run_evals` to process the seed cases and save JSON results and Matplotlib diagnostics. Answer-quality scoring is not defined yet; see [evals/README.md](evals/README.md).
