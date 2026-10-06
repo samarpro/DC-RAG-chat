@@ -6,7 +6,7 @@ The first screen is a disclaimer. After you agree, you get a chat with thumbs fe
 
 ## Run it
 
-You need Python 3.11+ and the keys listed in `.env.example`.
+You need Python 3.12+ and the keys listed in `.env.example`.
 
 ```bash
 python -m venv .venv

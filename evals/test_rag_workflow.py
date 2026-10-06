@@ -12,6 +12,7 @@ from qdrant_client import models
 
 from evals.rag_workflow import RAGResult, RAGWorkflow
 from evals.run_evals import comparison_runs, main, retrieval_metrics, run_evaluation, save_report
+from evals.reporting import SEARCH_MODES, align_runs
 
 
 class WorkflowTests(unittest.TestCase):
@@ -164,6 +165,38 @@ class WorkflowTests(unittest.TestCase):
                 invalid["configuration"][mutation] = on["configuration"][mutation] if mutation == "query_rewriting" else "different"
             with self.subTest(mutation=mutation), self.assertRaises(ValueError):
                 comparison_runs(on, invalid)
+
+    def test_cli_runs_all_six_configurations_and_saves_comparison(self):
+        def factory(*, search_mode, query_rewriting):
+            workflow = Mock(search_mode=search_mode, query_rewriting=query_rewriting)
+            workflow.answer.return_value = RAGResult("q", "q", [], {}, "answer", [])
+            return workflow
+
+        with TemporaryDirectory() as directory, patch("evals.run_evals.RAGWorkflow", side_effect=factory) as constructor:
+            main(["--query", "q", "--compare-all", "--output-dir", directory])
+            payload = json.loads((Path(directory) / "comparison_results.json").read_text())
+            expected = [(mode, rewriting) for mode in SEARCH_MODES for rewriting in (True, False)]
+            self.assertEqual([(run["configuration"]["search_mode"], run["configuration"]["query_rewriting"])
+                              for run in payload["runs"]], expected)
+            self.assertEqual(constructor.call_count, 6)
+            for mode, rewriting in expected:
+                self.assertTrue((Path(directory) / f"{mode}_rewriting_{'on' if rewriting else 'off'}" / "results.json").is_file())
+
+    def test_matrix_aligns_cases_and_rejects_duplicate_or_mismatched_runs(self):
+        from copy import deepcopy
+
+        workflow = Mock(search_mode="dense", query_rewriting=True)
+        workflow.answer.return_value = RAGResult("q", "q", [], {}, "a", [])
+        dense = run_evaluation(workflow, [{"id": "a", "query": "q"}, {"id": "b", "query": "r"}])
+        sparse = deepcopy(dense)
+        sparse["configuration"]["search_mode"] = "sparse"
+        sparse["cases"].reverse()
+        self.assertEqual([row["case"]["id"] for row in align_runs([dense, sparse])[1]["cases"]], ["a", "b"])
+        with self.assertRaisesRegex(ValueError, "Duplicate"):
+            align_runs([dense, dense])
+        sparse["configuration"]["limit"] = 20
+        with self.assertRaisesRegex(ValueError, "matching limit"):
+            align_runs([dense, sparse])
 
 
 class RetrievalMetricTests(unittest.TestCase):

@@ -19,6 +19,10 @@ python -m evals.run_evals
 # Run both rewriting settings and compare them in every graph
 python -m evals.run_evals --compare-query-rewriting
 
+# Compare dense-only, sparse-only, and hybrid, each with rewriting ON/OFF
+python -m evals.run_evals --compare-all
+python -m evals.judge_answers
+
 # Run rewriting off and compare with an existing rewriting-on report
 python -m evals.run_evals --no-query-rewriting --compare-report evals/results/results.json --output-dir evals/results/comparison
 
@@ -45,7 +49,11 @@ Retrieved-passage counts are omitted. Use separate output directories to preserv
 
 `--compare-query-rewriting` runs each case once with rewriting on and once with it off. `--compare-report PATH` instead compares the current run with a saved report from the opposite setting. Comparisons require identical cases, search mode, retrieval limit, and hit cutoffs; case IDs align the plots even when report order differs. These two flags are mutually exclusive.
 
-Comparison graphs keep the same filenames. Blue bars represent rewriting ON and orange bars rewriting OFF. Hit plots use solid bars for any reference and hatched bars for all references, with a legend for all four series. Latency plots pair the two settings for each case; MRR plots label each setting on the x-axis and show its scored case count. Missing scores are marked N/A. `comparison_results.json` preserves both complete reports, while `results.json` contains the primary run selected by `--query-rewriting` or `--no-query-rewriting`. Latency is measured once per case per setting and can vary between runs.
+Comparison graphs keep the same filenames. Run labels include both search mode and rewriting setting. Latency, MRR, and JEV plots use blue for dense, green for sparse, and purple for hybrid, with darker shades for rewriting ON and lighter shades for OFF. In a two-run comparison, hit plots use solid bars for any reference and hatched bars for all references. Latency plots group settings for each case; MRR plots label each setting on the x-axis and show its scored case count. Missing scores are marked N/A. `comparison_results.json` preserves both complete reports, while `results.json` contains the primary run selected by `--query-rewriting` or `--no-query-rewriting`. Latency is measured once per case per setting and can vary between runs.
+
+`--compare-all` runs all six configurations against identical cases and the same retrieval limit. It is mutually exclusive with the other comparison flags; the individual search-mode and rewriting flags apply only to single-mode runs. Results for each configuration are saved under folders such as `dense_rewriting_on` and `sparse_rewriting_off`. Root `results.json` and `comparison_results.json` contain a `runs` array with all six reports. The comparison rejects duplicate configurations, mismatched cases, limits, or hit cutoffs.
+
+For this six-run comparison, `hit_at_3_and_5.png` shows any/all dataset hit rates by configuration, with one panel per cutoff. `latency.png` groups all six configurations by query, and `mrr.png` shows their dataset MRR values. `judge_answers` accepts the same `runs` format and compares all six configurations in the rubric, composite, and expected-fact label plots. Run each case once per configuration; these are single-run comparisons rather than estimates of timing or model variability.
 
 ## Retrieval metrics
 

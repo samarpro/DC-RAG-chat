@@ -80,6 +80,26 @@ class JudgeAnswerTests(unittest.TestCase):
             for name in ("answer_quality.png", "expected_fact_labels.png"):
                 self.assertTrue((Path(directory) / name).read_bytes().startswith(b"\x89PNG"))
 
+    def test_all_six_modes_are_judged_and_plotted_without_merging_runs(self):
+        from evals.reporting import SEARCH_MODES
+
+        runs = []
+        for mode in SEARCH_MODES:
+            for rewriting in (True, False):
+                report = self.report(rewriting)
+                report["configuration"]["search_mode"] = mode
+                runs.append(report)
+        client = Mock()
+        client.judge.return_value = [self.response() for _ in runs]
+        judged = evaluate_answers({"runs": runs}, client, self.rubric)
+        self.assertEqual(len(client.judge.call_args.args[0]), 6)
+        self.assertEqual([(run["configuration"]["search_mode"], run["configuration"]["query_rewriting"])
+                          for run in judged["runs"]], [(mode, rewriting) for mode in SEARCH_MODES for rewriting in (True, False)])
+        with TemporaryDirectory() as directory:
+            save_quality_report(judged, Path(directory))
+            saved = json.loads((Path(directory) / "answer_quality.json").read_text())
+            self.assertEqual(len(saved["runs"]), 6)
+
     def test_invalid_inputs_fail_before_paid_calls(self):
         for field, value in (("expected_answer_facts", []), ("requires_source_links", "yes")):
             report = deepcopy(self.report())

@@ -17,7 +17,7 @@ from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
-from evals.run_evals import comparison_runs
+from evals.reporting import report_runs, run_style
 
 RUBRIC_PATH = Path(__file__).with_name("jev_rubric.json")
 MODEL = "typesafe-ai/jev"
@@ -160,10 +160,7 @@ def compose_score(case: dict[str, Any], result: dict[str, Any], response: dict[s
 
 
 def evaluate_answers(report: dict[str, Any], client: Any, rubric: dict[str, Any]) -> dict[str, Any]:
-    if "cases" in report:
-        runs = [report]
-    else:
-        runs = comparison_runs(report["query_rewriting_on"], report["query_rewriting_off"])
+    runs = report_runs(report)
     requests = []
     for run in runs:
         if not run["cases"]:
@@ -213,8 +210,7 @@ def save_quality_report(report: dict[str, Any], output_dir: Path) -> None:
     width = 0.8 / len(runs)
 
     def style(run):
-        on = run["configuration"]["query_rewriting"]
-        return ("Rewriting ON" if on else "Rewriting OFF", "tab:blue" if on else "tab:orange")
+        return run_style(run)
 
     def save(fig, filename):
         try:
@@ -223,7 +219,7 @@ def save_quality_report(report: dict[str, Any], output_dir: Path) -> None:
         finally:
             plt.close(fig)
 
-    fig, axes = plt.subplots(2, 1, figsize=(12, 10))
+    fig, axes = plt.subplots(2, 1, figsize=(16 if len(runs) > 2 else 12, 11))
     for index, run in enumerate(runs):
         label, color = style(run)
         offset = -0.4 + width * (index + 0.5)
@@ -241,13 +237,14 @@ def save_quality_report(report: dict[str, Any], output_dir: Path) -> None:
     axes[1].set_xticks(range(len(runs[0]["cases"])), [row["id"] for row in runs[0]["cases"]], rotation=45, ha="right")
     axes[1].set_title("Weighted composite score by case")
     for ax in axes:
-        ax.set_ylim(0, 115)
+        ax.set_ylim(0, 130 if len(runs) > 2 else 115)
+        ax.set_yticks(range(0, 101, 20))
         ax.set_ylabel("Score out of 100")
-        ax.legend()
+        ax.legend(ncol=3 if len(runs) > 2 else 1, fontsize=8)
     save(fig, "answer_quality.png")
 
     fact_labels = list(rubric["fact_labels"])
-    fig, ax = plt.subplots(figsize=(9, 4))
+    fig, ax = plt.subplots(figsize=(13 if len(runs) > 2 else 9, 5))
     for index, run in enumerate(runs):
         label, color = style(run)
         offset = -0.4 + width * (index + 0.5)
@@ -257,7 +254,9 @@ def save_quality_report(report: dict[str, Any], output_dir: Path) -> None:
     ax.set_xticks(range(len(fact_labels)), [name.replace("_", " ") for name in fact_labels])
     ax.set_ylabel("Expected fact count")
     ax.set_title("JEV labels for expected information")
-    ax.legend()
+    if len(runs) > 2:
+        ax.margins(y=0.3)
+    ax.legend(ncol=3 if len(runs) > 2 else 1, fontsize=8)
     save(fig, "expected_fact_labels.png")
 
 

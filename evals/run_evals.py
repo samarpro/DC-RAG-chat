@@ -14,6 +14,7 @@ from time import perf_counter
 from typing import Any, Sequence
 
 from evals.rag_workflow import RAGWorkflow
+from evals.reporting import SEARCH_MODES, report_runs, run_style
 
 
 DEFAULT_DATASET = Path(__file__).with_name("golden_questions_v1.json")
@@ -146,7 +147,8 @@ def save_report(
     report: dict[str, Any], output_dir: Path, *, counterpart: dict[str, Any] | None = None
 ) -> None:
     """Save plots, optionally comparing query rewriting on and off."""
-    runs = comparison_runs(report, counterpart)
+    matrix = "runs" in report
+    runs = report_runs(report) if matrix else comparison_runs(report, counterpart)
     import matplotlib
 
     matplotlib.use("Agg")
@@ -156,22 +158,26 @@ def save_report(
     (output_dir / "results.json").write_text(
         json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    if counterpart is not None:
+    if matrix:
+        (output_dir / "comparison_results.json").write_text(
+            json.dumps({"runs": runs}, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+    elif counterpart is not None:
         (output_dir / "comparison_results.json").write_text(
             json.dumps({"query_rewriting_on": runs[0], "query_rewriting_off": runs[1]},
                        indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
         )
     labels = [row["case"]["id"] for row in runs[0]["cases"]]
     positions = list(range(len(labels)))
-    config = report["configuration"]
-    caption = config["search_mode"]
-    width = max(10, len(labels) * 0.9)
+    config = runs[0]["configuration"]
+    caption = "all search modes" if matrix else config["search_mode"]
+    width = max(14 if matrix else 10, len(labels) * 0.9)
 
     def run_label(run):
-        return "Rewriting ON" if run["configuration"]["query_rewriting"] else "Rewriting OFF"
+        return run_style(run)[0]
 
     def run_color(run):
-        return "tab:blue" if run["configuration"]["query_rewriting"] else "tab:orange"
+        return run_style(run)[1]
 
     def label_cases(ax):
         ax.set_xlim(-0.6, len(labels) - 0.4)
@@ -189,6 +195,23 @@ def save_report(
     fig.suptitle(f"Reference file hits: {caption}")
     bar_width = 0.8 / (2 * len(runs))
     for ax, k in zip(axes, HIT_KS):
+        if matrix:
+            for offset, kind in ((-0.2, "any"), (0.2, "all")):
+                values = [run["retrieval_summary"]["hit_at_k"][str(k)][kind] for run in runs]
+                ax.bar([index + offset for index, value in enumerate(values) if value is not None],
+                       [value for value in values if value is not None], width=0.4,
+                       color="tab:blue" if kind == "any" else "tab:orange",
+                       label=f"{kind.title()} reference{'s' if kind == 'all' else ''}")
+                for index, value in enumerate(values):
+                    ax.text(index + offset, (value + 0.03) if value is not None else 0.05,
+                            f"{value:.3f}" if value is not None else "N/A", ha="center", fontsize=8)
+            ax.set_xticks(range(len(runs)), [run_label(run) for run in runs], rotation=20, ha="right")
+            ax.set_title(f"Dataset mean hit@{k}")
+            ax.set_ylabel(f"Hit@{k}")
+            ax.set_ylim(0, 1.2)
+            ax.set_yticks([0, 0.2, 0.4, 0.6, 0.8, 1])
+            ax.legend()
+            continue
         means = []
         for index, run in enumerate(runs):
             scored = [(position, row["retrieval_metrics"]) for position, row in enumerate(run["cases"])
@@ -224,11 +247,13 @@ def save_report(
                color=run_color(run), label=run_label(run))
     ax.set_title(f"End-to-end latency: {caption}")
     ax.set_ylabel("Latency (seconds)")
-    ax.legend()
+    if matrix:
+        ax.margins(y=0.25)
+    ax.legend(ncol=3 if matrix else 1, fontsize=8)
     label_cases(ax)
     save_figure(fig, "latency.png")
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(14 if matrix else 7, 5))
     for index, run in enumerate(runs):
         summary = run["retrieval_summary"]
         mrr = summary["mrr_at_limit"]
@@ -239,6 +264,8 @@ def save_report(
             ax.text(index, 0.5, "N/A: no scored cases", ha="center")
     ax.set_xticks(list(range(len(runs))),
                   [f"{run_label(run)}\n{run['retrieval_summary']['scored_cases']} scored cases" for run in runs])
+    if matrix:
+        ax.tick_params(axis="x", labelrotation=15)
     ax.set_xlim(-0.75, len(runs) - 0.25)
     ax.set_ylim(0, 1.15)
     ax.set_ylabel(f"MRR@{config['limit']}")
@@ -268,6 +295,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                             help="Run both rewriting settings and plot their comparison")
     comparison.add_argument("--compare-report", type=Path,
                             help="Compare with a saved results.json from the opposite rewriting setting")
+    comparison.add_argument("--compare-all", action="store_true",
+                            help="Run dense, sparse, and hybrid with rewriting on and off")
     parser.add_argument("--limit", type=positive_int, default=10)
     parser.add_argument("--output-dir", type=Path, default=Path("evals/results"))
     args = parser.parse_args(argv)
@@ -275,6 +304,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         cases = [{"id": "single-query", "query": args.query}]
     else:
         cases = json.loads(args.dataset.read_text(encoding="utf-8"))["cases"]
+    if args.compare_all:
+        runs = []
+        for mode in SEARCH_MODES:
+            for rewriting in (True, False):
+                print(f"Running {mode}, query rewriting {'ON' if rewriting else 'OFF'}", flush=True)
+                workflow = RAGWorkflow(search_mode=mode, query_rewriting=rewriting)
+                run = run_evaluation(workflow, cases, limit=args.limit)
+                save_report(run, args.output_dir / f"{mode}_rewriting_{'on' if rewriting else 'off'}")
+                runs.append(run)
+        save_report({"runs": runs}, args.output_dir)
+        print(f"Saved six configurations to {args.output_dir}")
+        return
     workflow = RAGWorkflow(
         search_mode=args.search_mode, query_rewriting=args.query_rewriting
     )
