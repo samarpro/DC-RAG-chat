@@ -1,7 +1,9 @@
 # Created by venv; see https://docs.python.org/3/library/venv.html
 
+# Google service account credentials
+gen-lang-client*.json
+
 # Local scripts and tests
-gen-lang*
 backfill_splade.py
 test_backfill*
 
